@@ -20,7 +20,6 @@ Notes:
 #include <Arduino_LoRaWAN_network.h>
 #include <Arduino_LoRaWAN_EventLog.h>
 #include <arduino_lmic.h>
-#include <Adafruit_BME280.h>
 
 /****************************************************************************\
 |
@@ -61,7 +60,7 @@ public:
     /// \param uplinkPeriodMs optional uplink interval. If not specified,
     ///         transmit every six minutes.
     ///
-    void setup(std::uint32_t uplinkPeriodMs = 6 * 60 * 1000);
+    void setup(std::uint32_t uplinkPeriodMs = 30 * 1000);
 
     ///
     /// \brief update sensor loop.
@@ -79,9 +78,6 @@ private:
     bool m_fBusy;                       // set true while sending an uplink
     std::uint32_t m_uplinkPeriodMs;     // uplink period in milliseconds
     std::uint32_t m_tReference;         // time of last uplink
-
-    //   The temperature/humidity sensor
-    Adafruit_BME280 m_BME280; // The default initalizer creates an I2C connection
 };
 
 /****************************************************************************\
@@ -105,32 +101,17 @@ Arduino_LoRaWAN::cEventLog myEventLog;
 |
 \****************************************************************************/
 
-//
-// For normal use, we require that you edit the sketch to replace FILLMEIN_x
-// with values assigned by the your network. However, for regression tests,
-// we want to be able to compile these scripts. The regression tests define
-// COMPILE_REGRESSION_TEST, and in that case we define FILLMEIN_x to non-
-// working but innocuous values.
-//
-// #define COMPILE_REGRESSION_TEST 1
+#include <device_id.inc>
 
-#ifdef COMPILE_REGRESSION_TEST
-# define FILLMEIN_8     1, 0, 0, 0, 0, 0, 0, 0
-# define FILLMEIN_16    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2
-#else
-# warning "You must replace the values marked FILLMEIN with real values from the TTN control panel!"
-# define FILLMEIN_8 (#dont edit this, edit the lines that use FILLMEIN_8)
-# define FILLMEIN_16 (#dont edit this, edit the lines that use FILLMEIN_16)
-#endif
+// device_id.inc contains:
+// // deveui, little-endian
+// static const std::uint8_t deveui[] = { FILLMEIN_8 };
 
-// deveui, little-endian
-static const std::uint8_t deveui[] = { FILLMEIN_8 };
+// // appeui, little-endian
+// static const std::uint8_t appeui[] = { FILLMEIN_8 };
 
-// appeui, little-endian
-static const std::uint8_t appeui[] = { FILLMEIN_8 };
-
-// appkey: just a string of bytes, sometimes referred to as "big endian".
-static const std::uint8_t appkey[] = { FILLMEIN_16 };
+// // appkey: just a string of bytes, sometimes referred to as "big endian".
+// static const std::uint8_t appkey[] = { FILLMEIN_16 };
 
 /****************************************************************************\
 |
@@ -272,14 +253,6 @@ cMyLoRaWAN::NetGetSessionState(SessionState &State) {
 
 void
 cSensor::setup(std::uint32_t uplinkPeriodMs) {
-    if (! this->m_BME280.begin(BME280_ADDRESS, Adafruit_BME280::OPERATING_MODE::Sleep)) {
-        while (true) {
-            // just loop forever, printing an error occasionally.
-            Serial.println("BME280.begin failed");
-            delay(2000);
-        }
-    }
-
     // set the initial time.
     this->m_uplinkPeriodMs = uplinkPeriodMs;
     this->m_tReference = millis();
@@ -318,33 +291,15 @@ cSensor::doUplink(void) {
     if (LMIC.opmode & (OP_POLL | OP_TXDATA | OP_TXRXPEND))
         return;
 
-    // make a measurement on the BME280
-    auto const m = this->m_BME280.readTemperaturePressureHumidity();
-
-    Serial.print("Sensor: T="); Serial.print(m.Temperature);
-    Serial.print(" degC, P="); Serial.print(m.Pressure);
-    Serial.print(" hPa, RH="); Serial.print(m.Humidity);
-    Serial.println("%");
-
     // format the uplink
-    // temperature is 2 bytes from -0x80.00 to +0x7F.FF degrees C
-    // humidity is 2 bytes, where 0 == 0% and 0xFFFF == 100%.
-    // pressure is 3 bytes, Pa.
-    // big-endian.
+    uint32_t value = analogRead(9);
 
-    std::uint8_t uplink[7];
-    auto const t = m.Temperature;
-    auto const it = std::int16_t(floor(t * 256 + 0.5));
-    auto const up = std::uint32_t(floor(m.Pressure + 0.5));
-    auto const uh = std::uint16_t(m.Humidity / 100.0 * 65535 + 0.5);
+    std::uint8_t uplink[4];
 
-    uplink[0] = std::uint8_t(std::uint16_t(it) >> 8);
-    uplink[1] = std::uint8_t(it);
-    uplink[2] = std::uint8_t(uh >> 8);
-    uplink[3] = std::uint8_t(uh);
-    uplink[4] = std::uint8_t(up >> 16);
-    uplink[5] = std::uint8_t(up >> 8);
-    uplink[6] = std::uint8_t(up);
+    uplink[0] = (value >> 24) & 0xFF;
+    uplink[1] = (value >> 16) & 0xFF;
+    uplink[2] = (value >>  8) & 0xFF;
+    uplink[3] = (value >>  0) & 0xFF;
 
     this->m_fBusy = true;
     
