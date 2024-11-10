@@ -20,6 +20,7 @@ Notes:
 #include <Arduino_LoRaWAN_network.h>
 #include <Arduino_LoRaWAN_EventLog.h>
 #include <arduino_lmic.h>
+#include <Adafruit_SleepyDog.h>
 
 /****************************************************************************\
 |
@@ -80,6 +81,18 @@ private:
     std::uint32_t m_tReference;         // time of last uplink
 };
 
+class {
+public:
+    void on() {
+        pinMode(PIN_LED, OUTPUT);
+        digitalWrite(PIN_LED, HIGH);
+    }
+    void off() {
+        digitalWrite(PIN_LED, LOW);
+        pinMode(PIN_LED, INPUT);
+    }
+} LED;
+
 /****************************************************************************\
 |
 |	Globals
@@ -122,8 +135,8 @@ Arduino_LoRaWAN::cEventLog myEventLog;
 void setup() {
     // set baud rate, and wait for serial to be ready.
     Serial.begin(115200);
-    while (! Serial)
-        yield();
+    // while (! Serial)
+    //     yield();
 
     Serial.println(F("simple_sensor_bmi280.ino: setup()"));
 
@@ -253,6 +266,8 @@ cMyLoRaWAN::NetGetSessionState(SessionState &State) {
 
 void
 cSensor::setup(std::uint32_t uplinkPeriodMs) {
+    LED.on();
+
     // set the initial time.
     this->m_uplinkPeriodMs = uplinkPeriodMs;
     this->m_tReference = millis();
@@ -263,22 +278,26 @@ cSensor::setup(std::uint32_t uplinkPeriodMs) {
 
 void
 cSensor::loop(void) {
-    auto const tNow = millis();
-    auto const deltaT = tNow - this->m_tReference;
-
-    if (deltaT >= this->m_uplinkPeriodMs) {
-        // request an uplink
-        this->m_fUplinkRequest = true;
-
-        // keep trigger time locked to uplinkPeriod
-        auto const advance = deltaT / this->m_uplinkPeriodMs;
-        this->m_tReference += advance * this->m_uplinkPeriodMs; 
-    }
-
     // if an uplink was requested, do it.
     if (this->m_fUplinkRequest) {
+        Serial.println(F("=== DO UPLINK"));
         this->m_fUplinkRequest = false;
         this->doUplink();
+    } else if ((LMIC.opmode & (OP_POLL | OP_TXDATA | OP_TXRXPEND)) == 0) {
+        Serial.println(F("=== SLEEPING"));
+        uint32_t slept = 0;
+        do {
+            // There seems to be a maximum time you can sleep
+            auto period = min(
+                this->m_uplinkPeriodMs - slept,
+                10000ul
+            );
+            LED.off();
+            slept += Watchdog.sleep(period);
+            LED.on();
+        } while (slept < this->m_uplinkPeriodMs);
+        Serial.println(F("=== AWAKE"));
+        this->m_fUplinkRequest = true;
     }
 }
 
